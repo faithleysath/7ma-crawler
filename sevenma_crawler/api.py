@@ -76,6 +76,7 @@ class SurroundingCar:
     lock_id: str | None = None
     battery_name: str | None = None
     distance: float | None = None
+    raw_payload: Mapping[str, object] | None = None
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, object]) -> SurroundingCar:
@@ -106,6 +107,7 @@ class SurroundingCar:
             distance=_parse_optional_float(
                 payload.get("distance"), field_name="car.distance"
             ),
+            raw_payload=dict(payload),
         )
 
 
@@ -186,6 +188,7 @@ class SurroundingCarResponse:
     data: SurroundingCarData
     extra: str
     trace_id: str | None = None
+    raw_body: str = ""
 
     @property
     def is_success(self) -> bool:
@@ -202,6 +205,7 @@ class SurroundingCarResponse:
         *,
         http_status: int,
         trace_id: str | None = None,
+        raw_body: str = "",
     ) -> SurroundingCarResponse:
         """Parse the full response body plus a small amount of HTTP metadata."""
 
@@ -212,6 +216,7 @@ class SurroundingCarResponse:
             data=_parse_surrounding_car_data(payload.get("data")),
             extra=_parse_optional_str(payload.get("extra"), field_name="extra") or "",
             trace_id=trace_id,
+            raw_body=raw_body,
         )
 
 
@@ -283,6 +288,7 @@ async def fetch_surrounding_cars(
         _require_mapping(payload, field_name="response"),
         http_status=response.status_code,
         trace_id=response.headers.get("x-trace-id"),
+        raw_body=response.text,
     )
     if raise_for_business_error and parsed.status_code != 200:
         raise SevenMateBusinessError(parsed)
