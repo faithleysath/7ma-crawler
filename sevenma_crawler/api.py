@@ -1,6 +1,7 @@
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Final, cast
 
 from curl_cffi import requests
 
@@ -56,11 +57,15 @@ class SevenMateBusinessError(SevenMateError):
 
 @dataclass(slots=True, frozen=True)
 class SurroundingCar:
-    # Observed sample values:
-    # - danche: carmodel_id=1, vendor_lock_id like "BL5300...", lock_id="14",
-    #   battery_name="7500mAH 3.6V"
-    # - zhuli: carmodel_id=2, vendor_lock_id often numeric, lock_id="11",
-    #   battery_name="4824"
+    """One vehicle entry from either the danche or zhuli bucket.
+
+    Observed sample values:
+    - danche: `carmodel_id=1`, `vendor_lock_id` like `"BL5300..."`,
+      `lock_id="14"`, `battery_name="7500mAH 3.6V"`
+    - zhuli: `carmodel_id=2`, `vendor_lock_id` often numeric,
+      `lock_id="11"`, `battery_name="4824"`
+    """
+
     id: int | None = None
     number: str | None = None
     longitude: str | None = None
@@ -73,7 +78,7 @@ class SurroundingCar:
     distance: float | None = None
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> SurroundingCar:
+    def from_payload(cls, payload: Mapping[str, object]) -> SurroundingCar:
         """Parse a single vehicle entry from the response body."""
 
         return cls(
@@ -112,18 +117,13 @@ class SurroundingCarGroup:
     @classmethod
     def from_payload(
         cls,
-        payload: Mapping[str, Any],
+        payload: Mapping[str, object],
         *,
         field_name: str,
     ) -> SurroundingCarGroup:
         """Parse one vehicle bucket such as danche or zhuli."""
 
-        cars_raw = payload.get("cars", [])
-        if not isinstance(cars_raw, list):
-            raise SevenMateDecodeError(
-                f"{field_name}.cars must be a list, got {type(cars_raw).__name__}."
-            )
-
+        cars_raw = _require_list(payload.get("cars"), field_name=f"{field_name}.cars")
         cars = tuple(
             SurroundingCar.from_payload(
                 _require_mapping(item, field_name=f"{field_name}.cars[{index}]")
@@ -138,11 +138,20 @@ class SurroundingCarGroup:
 
 @dataclass(slots=True, frozen=True)
 class StructuredSurroundingCarData:
-    danche: SurroundingCarGroup  # Pedal-bike bucket.
-    zhuli: SurroundingCarGroup  # E-bike bucket.
+    """Object-shaped `data` payload returned by the surrounding car endpoint.
+
+    Attributes:
+        danche: Pedal-bike bucket.
+        zhuli: E-bike bucket.
+    """
+
+    danche: SurroundingCarGroup
+    zhuli: SurroundingCarGroup
 
     @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> StructuredSurroundingCarData:
+    def from_payload(
+        cls, payload: Mapping[str, object]
+    ) -> StructuredSurroundingCarData:
         """Parse the object-shaped data payload."""
 
         return cls(
@@ -159,7 +168,7 @@ class StructuredSurroundingCarData:
 
 @dataclass(slots=True, frozen=True)
 class ListSurroundingCarData:
-    items: tuple[Any, ...]
+    items: tuple[object, ...]
 
     @property
     def is_empty(self) -> bool:
@@ -189,7 +198,7 @@ class SurroundingCarResponse:
     @classmethod
     def from_payload(
         cls,
-        payload: Mapping[str, Any],
+        payload: Mapping[str, object],
         *,
         http_status: int,
         trace_id: str | None = None,
@@ -266,8 +275,8 @@ async def fetch_surrounding_cars(
         raise SevenMateHTTPError(response.status_code, response.text)
 
     try:
-        payload = response.json()
-    except ValueError as exc:
+        payload: object = json.loads(response.text)
+    except json.JSONDecodeError as exc:
         raise SevenMateDecodeError("Response body is not valid JSON.") from exc
 
     parsed = SurroundingCarResponse.from_payload(
@@ -280,27 +289,35 @@ async def fetch_surrounding_cars(
     return parsed
 
 
-def _parse_surrounding_car_data(value: Any) -> SurroundingCarData:
+def _parse_surrounding_car_data(value: object) -> SurroundingCarData:
     if isinstance(value, Mapping):
         return StructuredSurroundingCarData.from_payload(
-            _require_mapping(value, field_name="data")
+            cast(Mapping[str, object], value)
         )
     if isinstance(value, list):
-        return ListSurroundingCarData(items=tuple(value))
+        return ListSurroundingCarData(items=tuple(cast(list[object], value)))
     raise SevenMateDecodeError(
         f"data must be an object or list, got {type(value).__name__}."
     )
 
 
-def _require_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
+def _require_mapping(value: object, *, field_name: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise SevenMateDecodeError(
             f"{field_name} must be an object, got {type(value).__name__}."
         )
-    return value
+    return cast(Mapping[str, object], value)
 
 
-def _parse_str(value: Any, *, field_name: str) -> str:
+def _require_list(value: object, *, field_name: str) -> list[object]:
+    if not isinstance(value, list):
+        raise SevenMateDecodeError(
+            f"{field_name} must be a list, got {type(value).__name__}."
+        )
+    return cast(list[object], value)
+
+
+def _parse_str(value: object, *, field_name: str) -> str:
     if isinstance(value, str):
         return value
     raise SevenMateDecodeError(
@@ -308,13 +325,13 @@ def _parse_str(value: Any, *, field_name: str) -> str:
     )
 
 
-def _parse_optional_str(value: Any, *, field_name: str) -> str | None:
+def _parse_optional_str(value: object, *, field_name: str) -> str | None:
     if value is None:
         return None
     return _parse_str(value, field_name=field_name)
 
 
-def _parse_int(value: Any, *, field_name: str) -> int:
+def _parse_int(value: object, *, field_name: str) -> int:
     if isinstance(value, bool):
         raise SevenMateDecodeError(f"{field_name} must be an int, got bool.")
     if isinstance(value, int):
@@ -333,13 +350,13 @@ def _parse_int(value: Any, *, field_name: str) -> int:
     )
 
 
-def _parse_optional_int(value: Any, *, field_name: str) -> int | None:
+def _parse_optional_int(value: object, *, field_name: str) -> int | None:
     if value is None:
         return None
     return _parse_int(value, field_name=field_name)
 
 
-def _parse_optional_float(value: Any, *, field_name: str) -> float | None:
+def _parse_optional_float(value: object, *, field_name: str) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool):
