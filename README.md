@@ -52,6 +52,20 @@ order by observed_at desc
 limit 20;
 ```
 
+### 启动监控大屏
+
+```bash
+uv run python -m sevenma_crawler serve-dashboard \
+  --database-url 'postgresql://sevenma:sevenma@localhost:5432/sevenma' \
+  --source-namespace local-dev \
+  --amap-key "$AMAP_WEB_KEY" \
+  --amap-security-js-code "$AMAP_SECURITY_JS_CODE" \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+然后打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+
 ### 主要表
 
 - `crawl_point`: 固定采集点配置

@@ -45,3 +45,36 @@ class CollectorSettings:
         if self.request_jitter_seconds < 0:
             raise ValueError("request_jitter_seconds must be >= 0.")
         return self
+
+
+@dataclass(slots=True, frozen=True)
+class DashboardSettings:
+    """Runtime settings for the monitoring dashboard web service."""
+
+    database_url: str
+    amap_key: str
+    amap_security_js_code: str
+    source_namespace: str
+    host: str = "127.0.0.1"
+    port: int = 8000
+    refresh_interval_seconds: int = 20
+    vehicle_limit: int = 1500
+
+    def validate(self) -> DashboardSettings:
+        """Return a validated copy of the dashboard settings."""
+
+        if not self.database_url:
+            raise ValueError("database_url must not be empty.")
+        if not self.amap_key:
+            raise ValueError("amap_key must not be empty.")
+        if not self.amap_security_js_code:
+            raise ValueError("amap_security_js_code must not be empty.")
+        if not self.source_namespace:
+            raise ValueError("source_namespace must not be empty.")
+        if self.port <= 0:
+            raise ValueError("port must be greater than 0.")
+        if self.refresh_interval_seconds <= 0:
+            raise ValueError("refresh_interval_seconds must be greater than 0.")
+        if self.vehicle_limit <= 0:
+            raise ValueError("vehicle_limit must be greater than 0.")
+        return self

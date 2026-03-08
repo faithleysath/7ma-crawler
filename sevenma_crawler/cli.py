@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import cast
 
 from .collector import run_forever, run_sweep
-from .config import CollectorSettings, build_default_collector_id, default_points_file
+from .config import (
+    CollectorSettings,
+    DashboardSettings,
+    build_default_collector_id,
+    default_points_file,
+)
+from .dashboard import serve_dashboard
 from .db import Database
 from .points import load_points
 
@@ -38,6 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_run_arguments(run_forever_parser)
 
+    serve_dashboard_parser = subparsers.add_parser(
+        "serve-dashboard",
+        help="serve the monitoring dashboard",
+    )
+    _add_dashboard_arguments(serve_dashboard_parser)
+
     return parser
 
 
@@ -64,6 +76,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "run-forever":
             settings = _build_settings(args)
             asyncio.run(_run_forever(settings))
+            return 0
+        if command == "serve-dashboard":
+            dashboard_settings = _build_dashboard_settings(args)
+            serve_dashboard(dashboard_settings)
             return 0
     except KeyboardInterrupt:
         return 130
@@ -167,7 +183,75 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_dashboard_arguments(parser: argparse.ArgumentParser) -> None:
+    _add_database_argument(parser)
+    parser.add_argument(
+        "--source-namespace",
+        type=str,
+        default=os.getenv("SEVENMA_DASHBOARD_SOURCE_NAMESPACE", "local-dev"),
+        help="source namespace displayed by the dashboard",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=os.getenv("SEVENMA_DASHBOARD_HOST", "127.0.0.1"),
+        help="dashboard bind host",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("SEVENMA_DASHBOARD_PORT", "8000")),
+        help="dashboard bind port",
+    )
+    parser.add_argument(
+        "--refresh-interval-seconds",
+        type=int,
+        default=int(os.getenv("SEVENMA_DASHBOARD_REFRESH_SECONDS", "20")),
+        help="frontend polling interval in seconds",
+    )
+    parser.add_argument(
+        "--vehicle-limit",
+        type=int,
+        default=int(os.getenv("SEVENMA_DASHBOARD_VEHICLE_LIMIT", "1500")),
+        help="maximum latest vehicles returned to the map",
+    )
+    parser.add_argument(
+        "--amap-key",
+        type=str,
+        default=os.getenv("AMAP_WEB_KEY"),
+        help="Amap Web JS API key",
+    )
+    parser.add_argument(
+        "--amap-security-js-code",
+        type=str,
+        default=os.getenv("AMAP_SECURITY_JS_CODE"),
+        help="Amap JS security code",
+    )
+
+
+def _build_dashboard_settings(args: argparse.Namespace) -> DashboardSettings:
+    return DashboardSettings(
+        database_url=_resolve_database_url(cast(str | None, args.database_url)),
+        amap_key=_resolve_required_value(cast(str | None, args.amap_key), "amap_key"),
+        amap_security_js_code=_resolve_required_value(
+            cast(str | None, args.amap_security_js_code),
+            "amap_security_js_code",
+        ),
+        source_namespace=cast(str, args.source_namespace),
+        host=cast(str, args.host),
+        port=cast(int, args.port),
+        refresh_interval_seconds=cast(int, args.refresh_interval_seconds),
+        vehicle_limit=cast(int, args.vehicle_limit),
+    ).validate()
+
+
 def _resolve_database_url(value: str | None) -> str:
     if value:
         return value
     raise ValueError("database_url is required. Pass --database-url or set DATABASE_URL.")
+
+
+def _resolve_required_value(value: str | None, field_name: str) -> str:
+    if value:
+        return value
+    raise ValueError(f"{field_name} is required.")

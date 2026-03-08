@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>7ma 监控大屏</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/dashboard.css" />
+  </head>
+  <body>
+    <div class="screen-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">7MA CAMPUS OPS</p>
+          <h1>南信大车辆实时监控大屏</h1>
+          <p class="subtitle">
+            基于 PostgreSQL 最新状态视图与高德地图的实时车辆监控面板
+          </p>
+        </div>
+        <div class="hero-meta">
+          <div class="meta-chip">
+            <span>命名空间</span>
+            <strong id="namespace-pill">-</strong>
+          </div>
+          <div class="meta-chip">
+            <span>最近刷新</span>
+            <strong id="generated-at">-</strong>
+          </div>
+          <div class="meta-chip status-chip" id="sweep-status-chip">
+            <span>最新批次</span>
+            <strong id="latest-sweep-status">-</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="stats-grid">
+        <article class="stat-card">
+          <span class="stat-label">当前车辆</span>
+          <strong class="stat-value" id="current-vehicle-total">-</strong>
+          <span class="stat-foot">来自 `vehicle_latest`</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">单车</span>
+          <strong class="stat-value amber" id="danche-total">-</strong>
+          <span class="stat-foot">踏板车实时数量</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">助力车</span>
+          <strong class="stat-value cyan" id="zhuli-total">-</strong>
+          <span class="stat-foot">电助力实时数量</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">最新批次命中</span>
+          <strong class="stat-value" id="raw-observation-count">-</strong>
+          <span class="stat-foot">原始车辆命中条数</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">最新批次去重</span>
+          <strong class="stat-value" id="latest-unique-count">-</strong>
+          <span class="stat-foot">按 vehicle_uid 去重</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">批次成功点位</span>
+          <strong class="stat-value" id="point-success-count">-</strong>
+          <span class="stat-foot" id="point-success-foot">-</span>
+        </article>
+      </section>
+
+      <main class="dashboard-layout">
+        <section class="map-panel panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Realtime Map</p>
+              <h2>车辆空间分布</h2>
+            </div>
+            <div class="map-tools">
+              <label class="toggle-control" for="coverage-toggle">
+                <input type="checkbox" id="coverage-toggle" checked />
+                <span class="toggle-track"></span>
+                <span class="toggle-text">显示覆盖范围</span>
+              </label>
+              <div class="legend">
+                <span><i class="legend-dot legend-dot--danche"></i>单车</span>
+                <span><i class="legend-dot legend-dot--zhuli"></i>助力车</span>
+                <span><i class="legend-dot legend-dot--point"></i>覆盖点</span>
+              </div>
+            </div>
+          </div>
+          <div id="map"></div>
+        </section>
+
+        <aside class="side-column">
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="panel-kicker">Batch Health</p>
+                <h2>最近批次</h2>
+              </div>
+            </div>
+            <div class="history-bars" id="history-bars"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="panel-kicker">Coverage Hotspots</p>
+                <h2>点位排行</h2>
+              </div>
+            </div>
+            <div class="point-list" id="point-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="panel-kicker">Newest Vehicles</p>
+                <h2>最新车辆样本</h2>
+              </div>
+            </div>
+            <div class="vehicle-list" id="vehicle-list"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script>
+      window.__DASHBOARD_CONFIG__ = {{ dashboard_config | tojson }};
+    </script>
+    <script src="/static/dashboard.js"></script>
+  </body>
+</html>
