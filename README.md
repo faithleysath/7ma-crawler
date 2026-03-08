@@ -2,7 +2,7 @@
 
 采集器会按固定点位扫 `7mate` 的周边车辆接口，把每次请求和每辆车原始命中都写进 PostgreSQL。
 
-### 本地启动 PostgreSQL
+### 本地开发直接跑 PostgreSQL
 
 ```bash
 docker compose up -d postgres
@@ -65,6 +65,54 @@ uv run python -m sevenma_crawler serve-dashboard \
 ```
 
 然后打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+
+### Docker Compose 一键编排
+
+先准备环境变量：
+
+```bash
+cp .env.example .env
+```
+
+默认 `.env` 会启用 compose 内置 PostgreSQL，数据库地址也是内部地址：
+
+```bash
+DATABASE_URL=postgresql://sevenma:sevenma@postgres:5432/sevenma
+COMPOSE_PROFILES=local-db
+```
+
+填好高德 key 后，直接启动整套服务：
+
+```bash
+docker compose up -d --build
+```
+
+包含的服务：
+- `postgres`: 可选的本地 PostgreSQL，放在 `local-db` profile 里
+- `bootstrap`: 一次性建表并导入 58 个点
+- `collector`: 常驻采集器
+- `dashboard`: 监控大屏
+
+大屏地址：
+
+```text
+http://127.0.0.1:8000
+```
+
+### 改成远程数据库
+
+如果你要把数据库切到云端或远程主机：
+
+1. 在 `.env` 里把 `DATABASE_URL` 改成远程连接串
+2. 把 `COMPOSE_PROFILES` 置空或删除，避免启动本地 PostgreSQL
+3. 再执行 `docker compose up -d --build`
+
+例如：
+
+```bash
+DATABASE_URL=postgresql://user:password@your-remote-host:5432/sevenma
+COMPOSE_PROFILES=
+```
 
 ### 主要表
 

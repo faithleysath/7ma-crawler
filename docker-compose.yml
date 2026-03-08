@@ -1,20 +1,68 @@
+x-app-env: &app-env
+  DATABASE_URL: ${DATABASE_URL:-postgresql://sevenma:sevenma@postgres:5432/sevenma}
+  AMAP_WEB_KEY: ${AMAP_WEB_KEY:-}
+  AMAP_SECURITY_JS_CODE: ${AMAP_SECURITY_JS_CODE:-}
+  SEVENMA_SOURCE_NAMESPACE: ${SEVENMA_SOURCE_NAMESPACE:-prod}
+  SEVENMA_COLLECTOR_ID: ${SEVENMA_COLLECTOR_ID:-collector-compose}
+  SEVENMA_INTERVAL_SECONDS: ${SEVENMA_INTERVAL_SECONDS:-60}
+  SEVENMA_CONCURRENCY: ${SEVENMA_CONCURRENCY:-8}
+  SEVENMA_TIMEOUT_SECONDS: ${SEVENMA_TIMEOUT_SECONDS:-10}
+  SEVENMA_REQUEST_JITTER_SECONDS: ${SEVENMA_REQUEST_JITTER_SECONDS:-0.35}
+  SEVENMA_DASHBOARD_SOURCE_NAMESPACE: ${SEVENMA_DASHBOARD_SOURCE_NAMESPACE:-prod}
+  SEVENMA_DASHBOARD_HOST: ${SEVENMA_DASHBOARD_HOST:-0.0.0.0}
+  SEVENMA_DASHBOARD_PORT: ${SEVENMA_DASHBOARD_PORT:-8000}
+  SEVENMA_DASHBOARD_REFRESH_SECONDS: ${SEVENMA_DASHBOARD_REFRESH_SECONDS:-20}
+  SEVENMA_DASHBOARD_VEHICLE_LIMIT: ${SEVENMA_DASHBOARD_VEHICLE_LIMIT:-1500}
+
+x-app-common: &app-common
+  build:
+    context: .
+  environment:
+    <<: *app-env
+  restart: unless-stopped
+
 services:
   postgres:
     image: postgres:17
-    container_name: sevenma-postgres
+    profiles: ["local-db"]
     environment:
-      POSTGRES_DB: sevenma
-      POSTGRES_USER: sevenma
-      POSTGRES_PASSWORD: sevenma
+      POSTGRES_DB: ${POSTGRES_DB:-sevenma}
+      POSTGRES_USER: ${POSTGRES_USER:-sevenma}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sevenma}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sevenma -d sevenma"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sevenma} -d ${POSTGRES_DB:-sevenma}"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
     volumes:
       - sevenma_postgres_data:/var/lib/postgresql/data
+
+  bootstrap:
+    <<: *app-common
+    command: ["python", "-m", "sevenma_crawler", "prepare-db"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+
+  collector:
+    <<: *app-common
+    command: ["python", "-m", "sevenma_crawler", "run-forever"]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+
+  dashboard:
+    <<: *app-common
+    command: ["python", "-m", "sevenma_crawler", "serve-dashboard"]
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "${DASHBOARD_PORT:-8000}:8000"
 
 volumes:
   sevenma_postgres_data:

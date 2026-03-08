@@ -1,0 +1,12 @@
+.git
+.gitignore
+.pytest_cache
+.ruff_cache
+.venv
+.vscode
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
