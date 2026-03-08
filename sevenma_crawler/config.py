@@ -30,6 +30,8 @@ class CollectorSettings:
     concurrency: int = 8
     timeout_seconds: float = 10.0
     request_jitter_seconds: float = 0.35
+    max_request_attempts: int = 3
+    retry_backoff_seconds: float = 0.5
 
     def validate(self) -> CollectorSettings:
         """Return a validated copy of the settings."""
@@ -44,6 +46,10 @@ class CollectorSettings:
             raise ValueError("timeout_seconds must be greater than 0.")
         if self.request_jitter_seconds < 0:
             raise ValueError("request_jitter_seconds must be >= 0.")
+        if self.max_request_attempts <= 0:
+            raise ValueError("max_request_attempts must be greater than 0.")
+        if self.retry_backoff_seconds < 0:
+            raise ValueError("retry_backoff_seconds must be >= 0.")
         return self
 
 

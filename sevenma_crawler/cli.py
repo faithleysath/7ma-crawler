@@ -35,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON file containing the crawl points",
     )
 
+    migrate_db = subparsers.add_parser("migrate-db", help="apply pending schema migrations")
+    _add_database_argument(migrate_db)
+
     run_once = subparsers.add_parser("run-once", help="run one full sweep")
     _add_run_arguments(run_once)
 
@@ -69,6 +72,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "prepare-db":
             _prepare_db(args)
             return 0
+        if command == "migrate-db":
+            _migrate_db(args)
+            return 0
         if command == "run-once":
             settings = _build_settings(args)
             asyncio.run(_run_once(settings))
@@ -99,6 +105,12 @@ def _prepare_db(args: argparse.Namespace) -> None:
         database.upsert_points(points)
 
 
+def _migrate_db(args: argparse.Namespace) -> None:
+    database_url = _resolve_database_url(cast(str | None, args.database_url))
+    with Database(database_url) as database:
+        database.ensure_schema()
+
+
 async def _run_once(settings: CollectorSettings) -> None:
     points = load_points(settings.points_file)
     with Database(settings.database_url) as database:
@@ -125,6 +137,8 @@ def _build_settings(args: argparse.Namespace) -> CollectorSettings:
         concurrency=cast(int, args.concurrency),
         timeout_seconds=cast(float, args.timeout_seconds),
         request_jitter_seconds=cast(float, args.request_jitter_seconds),
+        max_request_attempts=cast(int, args.max_request_attempts),
+        retry_backoff_seconds=cast(float, args.retry_backoff_seconds),
     ).validate()
 
 
@@ -180,6 +194,18 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=float(os.getenv("SEVENMA_REQUEST_JITTER_SECONDS", "0.35")),
         help="random delay added before each point request",
+    )
+    parser.add_argument(
+        "--max-request-attempts",
+        type=int,
+        default=int(os.getenv("SEVENMA_MAX_REQUEST_ATTEMPTS", "3")),
+        help="maximum attempts per point for retryable failures",
+    )
+    parser.add_argument(
+        "--retry-backoff-seconds",
+        type=float,
+        default=float(os.getenv("SEVENMA_RETRY_BACKOFF_SECONDS", "0.5")),
+        help="base delay before retrying a retryable point request",
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from importlib import resources
 from typing import Any, cast
 
@@ -10,6 +11,15 @@ from psycopg.types.json import Jsonb
 
 from .points import CrawlPoint
 from .records import PointFetchRecord, SweepRecord
+
+
+@dataclass(slots=True, frozen=True)
+class Migration:
+    """One versioned SQL migration bundled with the project."""
+
+    version: str
+    name: str
+    sql: str
 
 
 class Database:
@@ -34,14 +44,23 @@ class Database:
         self.close()
 
     def ensure_schema(self) -> None:
-        """Create the project's tables and views if they do not already exist."""
+        """Apply bundled SQL migrations in order."""
 
-        schema_sql = resources.files("sevenma_crawler").joinpath("schema.sql").read_text(
-            encoding="utf-8"
-        )
-        with self._connection.transaction():
-            with self._connection.cursor() as cursor:
-                cursor.execute(cast(Any, schema_sql))
+        self._ensure_migration_table()
+        applied_versions = self._load_applied_migration_versions()
+        for migration in _load_migrations():
+            if migration.version in applied_versions:
+                continue
+            with self._connection.transaction():
+                with self._connection.cursor() as cursor:
+                    cursor.execute(cast(Any, migration.sql))
+                    cursor.execute(
+                        """
+                        insert into schema_migration (version, name)
+                        values (%s, %s)
+                        """,
+                        (migration.version, migration.name),
+                    )
 
     def upsert_points(self, points: Sequence[CrawlPoint]) -> None:
         """Insert or update configured crawl points."""
@@ -249,3 +268,50 @@ class Database:
                         sweep.id,
                     ),
                 )
+
+    def _ensure_migration_table(self) -> None:
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    create table if not exists schema_migration (
+                        version text primary key,
+                        name text not null,
+                        applied_at timestamptz not null default now()
+                    )
+                    """
+                )
+
+    def _load_applied_migration_versions(self) -> set[str]:
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute("select version from schema_migration")
+                rows = cursor.fetchall()
+        return {str(row[0]) for row in rows}
+
+
+def _load_migrations() -> tuple[Migration, ...]:
+    migrations_dir = resources.files("sevenma_crawler").joinpath("migrations")
+    migrations = sorted(
+        (
+            _build_migration(resource.name, resource.read_text(encoding="utf-8"))
+            for resource in migrations_dir.iterdir()
+            if resource.is_file() and resource.name.endswith(".sql")
+        ),
+        key=lambda migration: migration.version,
+    )
+    if not migrations:
+        raise RuntimeError("No SQL migrations were found in sevenma_crawler/migrations.")
+    versions = [migration.version for migration in migrations]
+    if len(versions) != len(set(versions)):
+        raise RuntimeError("Duplicate migration versions detected.")
+    return tuple(migrations)
+
+
+def _build_migration(filename: str, sql_text: str) -> Migration:
+    version, separator, _name = filename.partition("_")
+    if not separator or not version:
+        raise RuntimeError(
+            f"Invalid migration filename {filename!r}; expected '<version>_<name>.sql'."
+        )
+    return Migration(version=version, name=filename, sql=sql_text)

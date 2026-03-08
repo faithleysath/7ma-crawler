@@ -47,6 +47,8 @@ class DashboardSummary(BaseModel):
     latest_sweep_success_count: int
     latest_sweep_failure_count: int
     latest_observed_at: str | None
+    is_stale: bool
+    stale_reason: str | None
 
 
 class SweepHistoryItem(BaseModel):
@@ -78,12 +80,21 @@ class DashboardVehicle(BaseModel):
     point_id: str
 
 
+class DashboardFailurePoint(BaseModel):
+    name: str
+    error_type: str
+    error_message: str | None
+    http_status: int | None
+    requested_at: str
+
+
 class DashboardBootstrapResponse(BaseModel):
     source_namespace: str
     generated_at: str
     summary: DashboardSummary
     latest_sweep: LatestSweep | None
     history: list[SweepHistoryItem]
+    failure_points: list[DashboardFailurePoint]
     points: list[DashboardPoint]
     top_points: list[DashboardTopPoint]
     vehicles: list[DashboardVehicle]
@@ -100,11 +111,22 @@ class DashboardRepository:
         *,
         source_namespace: str,
         vehicle_limit: int,
+        stale_after_seconds: int,
     ) -> DashboardBootstrapResponse:
         with psycopg.connect(self._database_url, row_factory=tuple_row) as connection:
             latest_sweep = self._fetch_latest_sweep(connection, source_namespace)
-            summary = self._fetch_summary(connection, source_namespace, latest_sweep)
+            summary = self._fetch_summary(
+                connection,
+                source_namespace,
+                latest_sweep,
+                stale_after_seconds=stale_after_seconds,
+            )
             history = self._fetch_history(connection, source_namespace)
+            failure_points = (
+                self._fetch_failure_points(connection, latest_sweep.id)
+                if latest_sweep is not None
+                else []
+            )
             points = self._fetch_points(connection)
             top_points = (
                 self._fetch_top_points(connection, latest_sweep.id)
@@ -122,6 +144,7 @@ class DashboardRepository:
             summary=summary,
             latest_sweep=latest_sweep,
             history=history,
+            failure_points=failure_points,
             points=points,
             top_points=top_points,
             vehicles=vehicles,
@@ -174,6 +197,8 @@ class DashboardRepository:
         connection: psycopg.Connection[tuple[Any, ...]],
         source_namespace: str,
         latest_sweep: LatestSweep | None,
+        *,
+        stale_after_seconds: int,
     ) -> DashboardSummary:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -190,6 +215,7 @@ class DashboardRepository:
             )
             vehicle_row = cursor.fetchone()
 
+        latest_observed_at_raw = None if vehicle_row is None else vehicle_row[3]
         raw_observation_count = 0
         unique_vehicle_count = 0
         point_count = latest_sweep.point_count if latest_sweep is not None else 0
@@ -213,6 +239,12 @@ class DashboardRepository:
                 raw_observation_count = int(sweep_row[0])
                 unique_vehicle_count = int(sweep_row[1])
 
+        is_stale, stale_reason = _build_stale_status(
+            latest_sweep=latest_sweep,
+            latest_observed_at=latest_observed_at_raw,
+            stale_after_seconds=stale_after_seconds,
+        )
+
         if vehicle_row is None:
             return DashboardSummary(
                 current_vehicle_total=0,
@@ -224,6 +256,8 @@ class DashboardRepository:
                 latest_sweep_success_count=success_count,
                 latest_sweep_failure_count=failure_count,
                 latest_observed_at=None,
+                is_stale=is_stale,
+                stale_reason=stale_reason,
             )
 
         return DashboardSummary(
@@ -236,6 +270,8 @@ class DashboardRepository:
             latest_sweep_success_count=success_count,
             latest_sweep_failure_count=failure_count,
             latest_observed_at=_to_optional_iso(vehicle_row[3]),
+            is_stale=is_stale,
+            stale_reason=stale_reason,
         )
 
     def _fetch_history(
@@ -333,6 +369,42 @@ class DashboardRepository:
             for row in rows
         ]
 
+    def _fetch_failure_points(
+        self,
+        connection: psycopg.Connection[tuple[Any, ...]],
+        latest_sweep_id: str,
+    ) -> list[DashboardFailurePoint]:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    p.name,
+                    pf.error_type,
+                    pf.error_message,
+                    pf.http_status,
+                    pf.requested_at
+                from point_fetch as pf
+                join crawl_point as p on p.id = pf.point_id
+                where
+                    pf.sweep_id = %s
+                    and pf.error_type is not null
+                order by pf.requested_at desc, p.name asc
+                limit 8
+                """,
+                (latest_sweep_id,),
+            )
+            rows = cursor.fetchall()
+        return [
+            DashboardFailurePoint(
+                name=str(row[0]),
+                error_type=str(row[1]),
+                error_message=row[2] if row[2] is None else str(row[2]),
+                http_status=row[3] if row[3] is None else int(row[3]),
+                requested_at=_to_iso(row[4]),
+            )
+            for row in rows
+        ]
+
     def _fetch_vehicles(
         self,
         connection: psycopg.Connection[tuple[Any, ...]],
@@ -415,6 +487,7 @@ def create_dashboard_app(settings: DashboardSettings) -> FastAPI:
         return repository.fetch_bootstrap(
             source_namespace=namespace,
             vehicle_limit=settings.vehicle_limit,
+            stale_after_seconds=max(settings.refresh_interval_seconds * 3, 180),
         )
 
     @app.get("/healthz")
@@ -443,3 +516,23 @@ def _to_optional_iso(value: datetime | None) -> str | None:
 
 def _to_iso_datetime_literal() -> str:
     return _to_iso(datetime.now(UTC))
+
+
+def _build_stale_status(
+    *,
+    latest_sweep: LatestSweep | None,
+    latest_observed_at: datetime | None,
+    stale_after_seconds: int,
+) -> tuple[bool, str | None]:
+    if latest_sweep is None:
+        return True, "尚未采集到任何批次"
+
+    reference_time = latest_observed_at
+    if reference_time is None:
+        fallback_iso = latest_sweep.finished_at or latest_sweep.started_at
+        reference_time = datetime.fromisoformat(fallback_iso)
+
+    age_seconds = int((datetime.now(UTC) - reference_time).total_seconds())
+    if age_seconds > stale_after_seconds:
+        return True, f"{age_seconds} 秒未收到新数据"
+    return False, None

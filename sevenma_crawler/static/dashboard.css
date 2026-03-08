@@ -47,6 +47,18 @@ body::before {
   padding: 28px;
 }
 
+.alert-strip {
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 114, 98, 0.28);
+  background: rgba(255, 114, 98, 0.11);
+  color: #ffd7d2;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
 .hero {
   display: flex;
   justify-content: space-between;
@@ -304,10 +316,11 @@ body::before {
 .side-column {
   display: grid;
   gap: 18px;
-  grid-template-rows: minmax(0, 0.95fr) minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-rows: minmax(0, 0.85fr) minmax(0, 0.95fr) minmax(0, 1fr) minmax(0, 1.2fr);
 }
 
 .history-bars,
+.failure-list,
 .point-list,
 .vehicle-list {
   display: grid;
@@ -346,6 +359,7 @@ body::before {
 }
 
 .point-item,
+.failure-item,
 .vehicle-item {
   display: grid;
   gap: 8px;
@@ -358,6 +372,43 @@ body::before {
 .point-item {
   grid-template-columns: 1fr auto;
   align-items: center;
+}
+
+.failure-item {
+  gap: 10px;
+}
+
+.failure-item--empty {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.failure-item__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.failure-item__head strong {
+  font-size: 14px;
+}
+
+.failure-item__head em {
+  font-style: normal;
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.failure-item__body {
+  display: grid;
+  gap: 6px;
+}
+
+.failure-item__body span {
+  color: var(--text-dim);
+  font-size: 12px;
 }
 
 .point-item strong {

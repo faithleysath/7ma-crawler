@@ -167,7 +167,10 @@ function renderVehicles(vehicles) {
 function renderSummary(payload) {
   document.getElementById("namespace-pill").textContent = payload.source_namespace;
   document.getElementById("generated-at").textContent = formatTime(payload.generated_at);
-  document.getElementById("latest-sweep-status").textContent = payload.latest_sweep?.status ?? "no-data";
+  const latestStatus = payload.latest_sweep?.status ?? "no-data";
+  document.getElementById("latest-sweep-status").textContent = payload.summary.is_stale
+    ? `${latestStatus} / stale`
+    : latestStatus;
   document.getElementById("current-vehicle-total").textContent = payload.summary.current_vehicle_total;
   document.getElementById("danche-total").textContent = payload.summary.danche_total;
   document.getElementById("zhuli-total").textContent = payload.summary.zhuli_total;
@@ -181,10 +184,20 @@ function renderSummary(payload) {
     `失败 ${payload.summary.latest_sweep_failure_count} 个点位`;
 
   const statusChip = document.getElementById("sweep-status-chip");
-  statusChip.style.borderColor =
-    payload.latest_sweep?.status === "completed"
+  statusChip.style.borderColor = payload.summary.is_stale
+    ? "rgba(255,114,98,0.35)"
+    : payload.latest_sweep?.status === "completed"
       ? "rgba(136,255,207,0.25)"
       : "rgba(255,114,98,0.25)";
+
+  const staleAlert = document.getElementById("stale-alert");
+  if (payload.summary.is_stale) {
+    staleAlert.hidden = false;
+    staleAlert.textContent = payload.summary.stale_reason ?? "数据已进入 stale 状态";
+  } else {
+    staleAlert.hidden = true;
+    staleAlert.textContent = "";
+  }
 }
 
 function renderHistory(history) {
@@ -218,6 +231,35 @@ function renderTopPoints(topPoints) {
         <span>原始命中 ${point.raw_observation_count}，去重 ${point.unique_vehicle_count}</span>
       </div>
       <em>${point.unique_vehicle_count}</em>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function renderFailurePoints(failurePoints) {
+  const container = document.getElementById("failure-list");
+  container.innerHTML = "";
+
+  if (!failurePoints.length) {
+    const row = document.createElement("div");
+    row.className = "failure-item failure-item--empty";
+    row.textContent = "最近批次没有失败点。";
+    container.appendChild(row);
+    return;
+  }
+
+  failurePoints.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "failure-item";
+    row.innerHTML = `
+      <div class="failure-item__head">
+        <strong>${escapeHtml(item.name)}</strong>
+        <em>${escapeHtml(item.error_type)}</em>
+      </div>
+      <div class="failure-item__body">
+        <span>${escapeHtml(safeText(item.error_message))}</span>
+        <span>${item.http_status == null ? "-" : `HTTP ${item.http_status}`} · ${escapeHtml(formatTime(item.requested_at))}</span>
+      </div>
     `;
     container.appendChild(row);
   });
@@ -263,6 +305,7 @@ async function refreshDashboard() {
     pointNameById = new Map(payload.points.map((point) => [point.id, point.name]));
     renderSummary(payload);
     renderHistory(payload.history);
+    renderFailurePoints(payload.failure_points);
     renderTopPoints(payload.top_points);
     renderVehicleList(payload.vehicles);
 

@@ -2,6 +2,21 @@
 
 采集器会按固定点位扫 `7mate` 的周边车辆接口，把每次请求和每辆车原始命中都写进 PostgreSQL。
 
+### 开发计划
+
+当前开发计划和勾选状态见 [docs/development-plan.md](/Users/laysath/proj/7ma-crawler/docs/development-plan.md)。
+
+运行与排障说明见 [docs/runbook.md](/Users/laysath/proj/7ma-crawler/docs/runbook.md)，数据库迁移说明见 [docs/database-migrations.md](/Users/laysath/proj/7ma-crawler/docs/database-migrations.md)。
+
+### 开发命令
+
+```bash
+uv sync --dev
+uv run ruff check sevenma_crawler tests
+uv run pyright
+uv run pytest -q
+```
+
 ### 本地开发直接跑 PostgreSQL
 
 ```bash
@@ -21,8 +36,18 @@ uv run python -m sevenma_crawler prepare-db
 ```
 
 这一步会：
-- 创建表和 `vehicle_latest` view
+- 执行所有未应用的 SQL migration
 - 把 [南信大选点.json](/Users/laysath/proj/7ma-crawler/南信大选点.json) 里的 58 个点写入 `crawl_point`
+
+### 升级已有数据库
+
+如果数据库已经存在，只想升级 schema，不想重复走点位导入：
+
+```bash
+uv run python -m sevenma_crawler migrate-db
+```
+
+迁移文件存放在 [sevenma_crawler/migrations](/Users/laysath/proj/7ma-crawler/sevenma_crawler/migrations/0001_initial.sql)。
 
 ### 跑一轮采集
 
@@ -113,6 +138,12 @@ http://127.0.0.1:8000
 DATABASE_URL=postgresql://user:password@your-remote-host:5432/sevenma
 COMPOSE_PROFILES=
 ```
+
+### 数据库迁移说明
+
+- 新库初始化：执行 `prepare-db`
+- 已有库升级：执行 `migrate-db`
+- 已应用迁移记录保存在 `schema_migration`
 
 ### 主要表
 
