@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import resources
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import psycopg
 from psycopg.rows import tuple_row
@@ -11,6 +11,8 @@ from psycopg.types.json import Jsonb
 
 from .points import CrawlPoint
 from .records import PointFetchRecord, SweepRecord
+
+_MIGRATION_LOCK_KEY: Final = 7_016_000_001
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,16 +48,18 @@ class Database:
     def ensure_schema(self) -> None:
         """Apply bundled SQL migrations in order."""
 
-        self._ensure_migration_table()
-        applied_versions = self._load_applied_migration_versions()
-        for migration in _load_migrations():
-            if migration.version in applied_versions:
-                continue
-            with self._connection.transaction():
-                with self._connection.cursor() as cursor:
-                    cursor.execute(cast(Any, migration.sql))
-                    cursor.execute(
-                        """
+        with self._connection.transaction():
+            self._acquire_migration_lock()
+            self._ensure_migration_table()
+            applied_versions = self._load_applied_migration_versions()
+            for migration in _load_migrations():
+                if migration.version in applied_versions:
+                    continue
+                with self._connection.transaction():
+                    with self._connection.cursor() as cursor:
+                        cursor.execute(cast(Any, migration.sql))
+                        cursor.execute(
+                            """
                         insert into schema_migration (version, name)
                         values (%s, %s)
                         """,
@@ -281,6 +285,10 @@ class Database:
                     )
                     """
                 )
+
+    def _acquire_migration_lock(self) -> None:
+        with self._connection.cursor() as cursor:
+            cursor.execute("select pg_advisory_xact_lock(%s)", (_MIGRATION_LOCK_KEY,))
 
     def _load_applied_migration_versions(self) -> set[str]:
         with self._connection.transaction():

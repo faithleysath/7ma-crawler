@@ -1,14 +1,73 @@
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import UTC, datetime
 
 import psycopg
 import pytest
 
-from sevenma_crawler.db import Database
+from sevenma_crawler.db import Database, Migration
 from sevenma_crawler.points import CrawlPoint
 from sevenma_crawler.records import PointFetchRecord, RawObservationRecord, SweepRecord
+
+
+@pytest.mark.integration
+def test_database_ensure_schema_serializes_concurrent_migrations(
+    test_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    migration = Migration(
+        version="9001",
+        name="9001_lock_probe.sql",
+        sql="""
+        select pg_sleep(0.25);
+        create table if not exists migration_lock_probe (
+            id integer primary key
+        )
+        """,
+    )
+    monkeypatch.setattr("sevenma_crawler.db._load_migrations", lambda: (migration,))
+
+    start_barrier = threading.Barrier(3)
+    failures: list[BaseException] = []
+
+    def run_ensure_schema() -> None:
+        try:
+            with Database(test_database_url) as database:
+                start_barrier.wait(timeout=5)
+                database.ensure_schema()
+        except BaseException as exc:
+            failures.append(exc)
+
+    threads = [
+        threading.Thread(target=run_ensure_schema, name=f"migrate-{index}")
+        for index in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+
+    start_barrier.wait(timeout=5)
+
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert failures == []
+
+    with psycopg.connect(test_database_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select count(*) from schema_migration where version = %s",
+                ("9001",),
+            )
+            migration_count = int(cursor.fetchone()[0])
+
+            cursor.execute("select to_regclass('public.migration_lock_probe')")
+            probe_table = cursor.fetchone()[0]
+
+    assert migration_count == 1
+    assert probe_table == "migration_lock_probe"
 
 
 @pytest.mark.integration
