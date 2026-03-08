@@ -7,11 +7,23 @@ let refreshTimer = null;
 let pointNameById = new Map();
 let vehicleInfoWindow = null;
 
-function formatTime(value) {
+function formatDateTime(value) {
   if (!value) {
     return "-";
   }
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function formatTimeOnly(value) {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function safeText(value) {
@@ -120,7 +132,7 @@ function buildVehicleTooltip(vehicle) {
         <span>采样点</span>
         <strong>${escapeHtml(pointName)}</strong>
         <span>时间</span>
-        <strong>${escapeHtml(formatTime(vehicle.observed_at))}</strong>
+        <strong>${escapeHtml(formatDateTime(vehicle.observed_at))}</strong>
         <span>坐标</span>
         <strong>${vehicle.longitude.toFixed(6)}, ${vehicle.latitude.toFixed(6)}</strong>
       </div>
@@ -166,7 +178,7 @@ function renderVehicles(vehicles) {
 
 function renderSummary(payload) {
   document.getElementById("namespace-pill").textContent = payload.source_namespace;
-  document.getElementById("generated-at").textContent = formatTime(payload.generated_at);
+  document.getElementById("generated-at").textContent = formatDateTime(payload.generated_at);
   const latestStatus = payload.latest_sweep?.status ?? "no-data";
   document.getElementById("latest-sweep-status").textContent = payload.summary.is_stale
     ? `${latestStatus} / stale`
@@ -209,7 +221,7 @@ function renderHistory(history) {
     const row = document.createElement("div");
     row.className = "history-bar";
     row.innerHTML = `
-      <span class="history-slot">${formatTime(item.logical_slot).slice(11)}</span>
+      <span class="history-slot">${formatTimeOnly(item.logical_slot)}</span>
       <div class="history-rail">
         <div class="history-fill" style="width:${(item.unique_vehicle_count / maxCount) * 100}%"></div>
       </div>
@@ -258,7 +270,7 @@ function renderFailurePoints(failurePoints) {
       </div>
       <div class="failure-item__body">
         <span>${escapeHtml(safeText(item.error_message))}</span>
-        <span>${item.http_status == null ? "-" : `HTTP ${item.http_status}`} · ${escapeHtml(formatTime(item.requested_at))}</span>
+        <span>${item.http_status == null ? "-" : `HTTP ${item.http_status}`} · ${escapeHtml(formatDateTime(item.requested_at))}</span>
       </div>
     `;
     container.appendChild(row);
@@ -282,7 +294,7 @@ function renderVehicleList(vehicles) {
       </div>
       <div class="vehicle-meta">
         <div>${vehicle.distance_m == null ? "-" : `${vehicle.distance_m.toFixed(1)}m`}</div>
-        <div>${formatTime(vehicle.observed_at).slice(11)}</div>
+        <div>${formatTimeOnly(vehicle.observed_at)}</div>
       </div>
     `;
     container.appendChild(row);
