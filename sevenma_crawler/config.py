@@ -12,6 +12,12 @@ def default_points_file() -> Path:
     return Path(__file__).resolve().parent.parent / "南信大选点.json"
 
 
+def default_raw_fetch_log_dir() -> Path:
+    """Return the default directory used for raw per-attempt fetch logs."""
+
+    return Path(__file__).resolve().parent.parent / "var" / "raw-fetch-logs"
+
+
 def build_default_collector_id() -> str:
     """Build a readable default collector identifier for the current process."""
 
@@ -24,6 +30,7 @@ class CollectorSettings:
 
     database_url: str
     points_file: Path
+    raw_fetch_log_dir: Path
     source_namespace: str
     collector_id: str
     interval_seconds: int = 60

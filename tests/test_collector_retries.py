@@ -140,6 +140,7 @@ async def _run_collect_point(
         settings=CollectorSettings(
             database_url="postgresql://example",
             points_file=Path("points.json"),
+            raw_fetch_log_dir=Path("raw-fetch-logs"),
             source_namespace="test",
             collector_id="collector-test",
             request_jitter_seconds=0,

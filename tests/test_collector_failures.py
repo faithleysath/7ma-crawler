@@ -9,6 +9,7 @@ import pytest
 
 from sevenma_crawler.api import (
     ListSurroundingCarData,
+    SevenMateDecodeError,
     SevenMateHTTPError,
     SurroundingCarResponse,
 )
@@ -88,6 +89,28 @@ def test_collect_point_records_unexpected_error(monkeypatch: pytest.MonkeyPatch)
     assert record.raw_json is None
 
 
+def test_collect_point_records_decode_error_raw_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_fetch_surrounding_cars(**_kwargs: object) -> SurroundingCarResponse:
+        raise SevenMateDecodeError(
+            "car.lock_id must be a string-like scalar, got dict.",
+            http_status=200,
+            trace_id="trace-decode",
+            response_text='{"status_code":200,"message":"ok"}',
+        )
+
+    monkeypatch.setattr(
+        "sevenma_crawler.collector.fetch_surrounding_cars",
+        fake_fetch_surrounding_cars,
+    )
+
+    record = asyncio.run(_run_collect_point())
+
+    assert record.http_status == 200
+    assert record.trace_id == "trace-decode"
+    assert record.error_type == "SevenMateDecodeError"
+    assert record.raw_json == {"status_code": 200, "message": "ok"}
+
+
 async def _run_collect_point() -> PointFetchRecord:
     return await _collect_point(
         point=CrawlPoint(
@@ -99,6 +122,7 @@ async def _run_collect_point() -> PointFetchRecord:
         settings=CollectorSettings(
             database_url="postgresql://example",
             points_file=Path("points.json"),
+            raw_fetch_log_dir=Path("raw-fetch-logs"),
             source_namespace="test",
             collector_id="collector-test",
             request_jitter_seconds=0,

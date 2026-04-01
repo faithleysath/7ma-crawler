@@ -14,6 +14,7 @@ from .config import (
     DashboardSettings,
     build_default_collector_id,
     default_points_file,
+    default_raw_fetch_log_dir,
 )
 from .dashboard import serve_dashboard
 from .db import Database
@@ -131,6 +132,7 @@ def _build_settings(args: argparse.Namespace) -> CollectorSettings:
     return CollectorSettings(
         database_url=_resolve_database_url(cast(str | None, args.database_url)),
         points_file=Path(cast(str, args.points_file)),
+        raw_fetch_log_dir=Path(cast(str, args.raw_fetch_log_dir)),
         source_namespace=cast(str, args.source_namespace),
         collector_id=cast(str, args.collector_id),
         interval_seconds=cast(int, args.interval_seconds),
@@ -170,6 +172,12 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         type=str,
         default=os.getenv("SEVENMA_COLLECTOR_ID", build_default_collector_id()),
         help="collector identifier stored in crawl_sweep",
+    )
+    parser.add_argument(
+        "--raw-fetch-log-dir",
+        type=str,
+        default=os.getenv("SEVENMA_RAW_FETCH_LOG_DIR", str(default_raw_fetch_log_dir())),
+        help="directory for append-only raw fetch attempt JSONL logs",
     )
     parser.add_argument(
         "--interval-seconds",

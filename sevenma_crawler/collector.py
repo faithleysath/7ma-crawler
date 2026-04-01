@@ -24,6 +24,7 @@ from .api import (
 )
 from .config import CollectorSettings
 from .db import Database
+from .fetch_audit import FetchAttemptLogRecord, RawFetchAuditLogger
 from .points import CrawlPoint
 from .records import (
     PointFetchRecord,
@@ -96,9 +97,18 @@ async def run_sweep(
         point_count=len(points),
     )
     database.insert_sweep(sweep)
+    audit_logger = RawFetchAuditLogger(
+        log_dir=settings.raw_fetch_log_dir,
+        database=database,
+    )
 
     try:
-        point_fetches = await _collect_points(settings=settings, points=points, sweep=sweep)
+        point_fetches = await _collect_points(
+            settings=settings,
+            points=points,
+            sweep=sweep,
+            audit_logger=audit_logger,
+        )
         finished_at = datetime.now(UTC)
         success_count = sum(1 for point_fetch in point_fetches if point_fetch.is_success)
         failure_count = len(point_fetches) - success_count
@@ -166,6 +176,7 @@ async def _collect_points(
     settings: CollectorSettings,
     points: tuple[CrawlPoint, ...],
     sweep: SweepRecord,
+    audit_logger: RawFetchAuditLogger | None = None,
 ) -> tuple[PointFetchRecord, ...]:
     semaphore = asyncio.Semaphore(settings.concurrency)
     async with requests.AsyncSession(timeout=settings.timeout_seconds) as session:
@@ -177,6 +188,7 @@ async def _collect_points(
                     sweep=sweep,
                     session=session,
                     semaphore=semaphore,
+                    audit_logger=audit_logger,
                 )
             )
             for point in points
@@ -192,6 +204,7 @@ async def _collect_point(
     sweep: SweepRecord,
     session: requests.AsyncSession,
     semaphore: asyncio.Semaphore,
+    audit_logger: RawFetchAuditLogger | None = None,
 ) -> PointFetchRecord:
     async with semaphore:
         if settings.request_jitter_seconds > 0:
@@ -200,7 +213,9 @@ async def _collect_point(
         fetch_id = uuid.uuid7()
         requested_at = datetime.now(UTC)
         for attempt in range(1, settings.max_request_attempts + 1):
+            attempt_requested_at = datetime.now(UTC)
             attempt_started = monotonic()
+            response: SurroundingCarResponse | None = None
             try:
                 response = await fetch_surrounding_cars(
                     latitude=point.latitude,
@@ -216,6 +231,23 @@ async def _collect_point(
                     sweep_id=sweep.id,
                     point=point,
                     observed_at=finished_at,
+                )
+                _write_attempt_audit_log(
+                    audit_logger=audit_logger,
+                    fetch_id=fetch_id,
+                    sweep=sweep,
+                    point=point,
+                    attempt=attempt,
+                    requested_at=attempt_requested_at,
+                    finished_at=finished_at,
+                    http_status=response.http_status,
+                    status_code=response.status_code,
+                    trace_id=response.trace_id,
+                    error_type=None
+                    if response.status_code == 200
+                    else "SevenMateBusinessError",
+                    error_message=None if response.status_code == 200 else response.message,
+                    response_body=response.raw_body,
                 )
                 if response.status_code == 200:
                     LOGGER.info(
@@ -257,6 +289,21 @@ async def _collect_point(
             except SevenMateHTTPError as exc:
                 finished_at = datetime.now(UTC)
                 latency_ms = int((monotonic() - attempt_started) * 1000)
+                _write_attempt_audit_log(
+                    audit_logger=audit_logger,
+                    fetch_id=fetch_id,
+                    sweep=sweep,
+                    point=point,
+                    attempt=attempt,
+                    requested_at=attempt_requested_at,
+                    finished_at=finished_at,
+                    http_status=exc.http_status,
+                    status_code=None,
+                    trace_id=exc.trace_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    response_body=exc.response_text,
+                )
                 if _should_retry_http_error(exc) and attempt < settings.max_request_attempts:
                     LOGGER.warning(
                         "point fetch retrying point=%s attempt=%s latency_ms=%s error=%s http_status=%s next_delay_seconds=%.3f",
@@ -294,7 +341,7 @@ async def _collect_point(
                     finished_at=finished_at,
                     http_status=exc.http_status,
                     status_code=None,
-                    trace_id=None,
+                    trace_id=exc.trace_id,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                     raw_json=_decode_json_or_none(exc.response_text),
@@ -302,6 +349,21 @@ async def _collect_point(
             except requests.RequestsError as exc:
                 finished_at = datetime.now(UTC)
                 latency_ms = int((monotonic() - attempt_started) * 1000)
+                _write_attempt_audit_log(
+                    audit_logger=audit_logger,
+                    fetch_id=fetch_id,
+                    sweep=sweep,
+                    point=point,
+                    attempt=attempt,
+                    requested_at=attempt_requested_at,
+                    finished_at=finished_at,
+                    http_status=None,
+                    status_code=None,
+                    trace_id=None,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    response_body=None,
+                )
                 if attempt < settings.max_request_attempts:
                     LOGGER.warning(
                         "point fetch retrying point=%s attempt=%s latency_ms=%s error=%s next_delay_seconds=%.3f",
@@ -345,6 +407,22 @@ async def _collect_point(
             except SevenMateError as exc:
                 finished_at = datetime.now(UTC)
                 latency_ms = int((monotonic() - attempt_started) * 1000)
+                decode_error = exc if isinstance(exc, SevenMateDecodeError) else None
+                _write_attempt_audit_log(
+                    audit_logger=audit_logger,
+                    fetch_id=fetch_id,
+                    sweep=sweep,
+                    point=point,
+                    attempt=attempt,
+                    requested_at=attempt_requested_at,
+                    finished_at=finished_at,
+                    http_status=None if decode_error is None else decode_error.http_status,
+                    status_code=None,
+                    trace_id=None if decode_error is None else decode_error.trace_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    response_body=None if decode_error is None else decode_error.response_text,
+                )
                 LOGGER.warning(
                     "point fetch failed point=%s attempt=%s latency_ms=%s error=%s",
                     point.name,
@@ -358,16 +436,33 @@ async def _collect_point(
                     point=point,
                     requested_at=requested_at,
                     finished_at=finished_at,
-                    http_status=None,
+                    http_status=None if decode_error is None else decode_error.http_status,
                     status_code=None,
-                    trace_id=None,
+                    trace_id=None if decode_error is None else decode_error.trace_id,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
-                    raw_json=None,
+                    raw_json=None
+                    if decode_error is None
+                    else _decode_json_or_none(decode_error.response_text),
                 )
             except Exception as exc:
                 finished_at = datetime.now(UTC)
                 latency_ms = int((monotonic() - attempt_started) * 1000)
+                _write_attempt_audit_log(
+                    audit_logger=audit_logger,
+                    fetch_id=fetch_id,
+                    sweep=sweep,
+                    point=point,
+                    attempt=attempt,
+                    requested_at=attempt_requested_at,
+                    finished_at=finished_at,
+                    http_status=None if response is None else response.http_status,
+                    status_code=None if response is None else response.status_code,
+                    trace_id=None if response is None else response.trace_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    response_body=None if response is None else response.raw_body,
+                )
                 LOGGER.exception(
                     "unexpected collector error point=%s attempt=%s latency_ms=%s",
                     point.name,
@@ -380,12 +475,12 @@ async def _collect_point(
                     point=point,
                     requested_at=requested_at,
                     finished_at=finished_at,
-                    http_status=None,
-                    status_code=None,
-                    trace_id=None,
+                    http_status=None if response is None else response.http_status,
+                    status_code=None if response is None else response.status_code,
+                    trace_id=None if response is None else response.trace_id,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
-                    raw_json=None,
+                    raw_json=None if response is None else _decode_json_or_none(response.raw_body),
                 )
 
         raise AssertionError("collector retry loop exhausted without returning a point fetch record")
@@ -440,8 +535,51 @@ def _parse_optional_coordinate(value: str | None) -> float | None:
         return None
     try:
         return float(value)
-    except ValueError as exc:
-        raise SevenMateDecodeError(f"coordinate must be a float-like string, got {value!r}.") from exc
+    except ValueError:
+        LOGGER.warning("discarding invalid coordinate value=%r", value)
+        return None
+
+
+def _write_attempt_audit_log(
+    *,
+    audit_logger: RawFetchAuditLogger | None,
+    fetch_id: uuid.UUID,
+    sweep: SweepRecord,
+    point: CrawlPoint,
+    attempt: int,
+    requested_at: datetime,
+    finished_at: datetime,
+    http_status: int | None,
+    status_code: int | None,
+    trace_id: str | None,
+    error_type: str | None,
+    error_message: str | None,
+    response_body: str | None,
+) -> None:
+    if audit_logger is None:
+        return
+    audit_logger.write(
+        FetchAttemptLogRecord(
+            id=uuid.uuid7(),
+            fetch_id=fetch_id,
+            sweep_id=sweep.id,
+            point_id=point.id,
+            point_name=point.name,
+            source_namespace=sweep.source_namespace,
+            collector_id=sweep.collector_id,
+            attempt=attempt,
+            requested_at=requested_at,
+            finished_at=finished_at,
+            request_latitude=point.latitude,
+            request_longitude=point.longitude,
+            http_status=http_status,
+            status_code=status_code,
+            trace_id=trace_id,
+            error_type=error_type,
+            error_message=error_message,
+            response_body=response_body,
+        )
+    )
 
 
 def _decode_json_or_none(text: str) -> object | None:

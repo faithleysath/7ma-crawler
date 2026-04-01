@@ -35,14 +35,34 @@ class SevenMateError(RuntimeError):
 class SevenMateHTTPError(SevenMateError):
     """Raised when the API returns a non-200 HTTP response."""
 
-    def __init__(self, http_status: int, response_text: str) -> None:
+    def __init__(
+        self,
+        http_status: int,
+        response_text: str,
+        *,
+        trace_id: str | None = None,
+    ) -> None:
         super().__init__(f"7mate API returned HTTP {http_status}.")
         self.http_status = http_status
         self.response_text = response_text
+        self.trace_id = trace_id
 
 
 class SevenMateDecodeError(SevenMateError):
     """Raised when the response body cannot be parsed into the expected schema."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None = None,
+        trace_id: str | None = None,
+        response_text: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.trace_id = trace_id
+        self.response_text = response_text
 
 
 class SevenMateBusinessError(SevenMateError):
@@ -84,24 +104,30 @@ class SurroundingCar:
 
         return cls(
             id=_parse_optional_int(payload.get("id"), field_name="car.id"),
-            number=_parse_optional_str(payload.get("number"), field_name="car.number"),
-            longitude=_parse_optional_str(
+            number=_parse_optional_string_like(
+                payload.get("number"),
+                field_name="car.number",
+            ),
+            longitude=_parse_optional_string_like(
                 payload.get("longitude"), field_name="car.longitude"
             ),
-            latitude=_parse_optional_str(
+            latitude=_parse_optional_string_like(
                 payload.get("latitude"), field_name="car.latitude"
             ),
             carmodel_id=_parse_optional_int(
                 payload.get("carmodel_id"), field_name="car.carmodel_id"
             ),
-            vendor_lock_id=_parse_optional_str(
+            vendor_lock_id=_parse_optional_string_like(
                 payload.get("vendor_lock_id"), field_name="car.vendor_lock_id"
             ),
             api_type=_parse_optional_int(
                 payload.get("api_type"), field_name="car.api_type"
             ),
-            lock_id=_parse_optional_str(payload.get("lock_id"), field_name="car.lock_id"),
-            battery_name=_parse_optional_str(
+            lock_id=_parse_optional_string_like(
+                payload.get("lock_id"),
+                field_name="car.lock_id",
+            ),
+            battery_name=_parse_optional_string_like(
                 payload.get("battery_name"), field_name="car.battery_name"
             ),
             distance=_parse_optional_float(
@@ -277,19 +303,36 @@ async def fetch_surrounding_cars(
             await client.close()
 
     if response.status_code != 200:
-        raise SevenMateHTTPError(response.status_code, response.text)
+        raise SevenMateHTTPError(
+            response.status_code,
+            response.text,
+            trace_id=response.headers.get("x-trace-id"),
+        )
 
     try:
         payload: object = json.loads(response.text)
     except json.JSONDecodeError as exc:
-        raise SevenMateDecodeError("Response body is not valid JSON.") from exc
+        raise SevenMateDecodeError(
+            "Response body is not valid JSON.",
+            http_status=response.status_code,
+            trace_id=response.headers.get("x-trace-id"),
+            response_text=response.text,
+        ) from exc
 
-    parsed = SurroundingCarResponse.from_payload(
-        _require_mapping(payload, field_name="response"),
-        http_status=response.status_code,
-        trace_id=response.headers.get("x-trace-id"),
-        raw_body=response.text,
-    )
+    try:
+        parsed = SurroundingCarResponse.from_payload(
+            _require_mapping(payload, field_name="response"),
+            http_status=response.status_code,
+            trace_id=response.headers.get("x-trace-id"),
+            raw_body=response.text,
+        )
+    except SevenMateDecodeError as exc:
+        raise SevenMateDecodeError(
+            str(exc),
+            http_status=response.status_code,
+            trace_id=response.headers.get("x-trace-id"),
+            response_text=response.text,
+        ) from exc
     if raise_for_business_error and parsed.status_code != 200:
         raise SevenMateBusinessError(parsed)
     return parsed
@@ -335,6 +378,26 @@ def _parse_optional_str(value: object, *, field_name: str) -> str | None:
     if value is None:
         return None
     return _parse_str(value, field_name=field_name)
+
+
+def _parse_string_like(value: object, *, field_name: str) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        raise SevenMateDecodeError(f"{field_name} must be a string, got bool.")
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else str(value)
+    raise SevenMateDecodeError(
+        f"{field_name} must be a string-like scalar, got {type(value).__name__}."
+    )
+
+
+def _parse_optional_string_like(value: object, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _parse_string_like(value, field_name=field_name)
 
 
 def _parse_int(value: object, *, field_name: str) -> int:

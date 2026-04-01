@@ -8,6 +8,7 @@ import psycopg
 import pytest
 
 from sevenma_crawler.db import Database, Migration
+from sevenma_crawler.fetch_audit import FetchAttemptLogRecord
 from sevenma_crawler.points import CrawlPoint
 from sevenma_crawler.records import PointFetchRecord, RawObservationRecord, SweepRecord
 
@@ -92,6 +93,13 @@ def test_database_finalize_sweep_persists_latest_vehicle_state(test_database_url
             point_count=1,
         )
         database.insert_sweep(first_sweep)
+        database.insert_fetch_attempt_log(
+            _build_fetch_attempt_log(
+                sweep_id=first_sweep.id,
+                point=point,
+                fetch_id=uuid.uuid4(),
+            )
+        )
         first_fetch_id = uuid.uuid4()
         database.finalize_sweep(
             SweepRecord(
@@ -182,11 +190,14 @@ def test_database_finalize_sweep_persists_latest_vehicle_state(test_database_url
             cursor.execute("select count(*) from point_fetch")
             fetch_count = int(cursor.fetchone()[0])
 
+            cursor.execute("select count(*) from fetch_attempt_log")
+            fetch_attempt_log_count = int(cursor.fetchone()[0])
+
             cursor.execute("select count(*) from schema_migration")
             migration_count = int(cursor.fetchone()[0])
 
             cursor.execute("select version, name from schema_migration order by version")
-            migration_row = cursor.fetchone()
+            migration_rows = cursor.fetchall()
 
             cursor.execute(
                 """
@@ -200,8 +211,12 @@ def test_database_finalize_sweep_persists_latest_vehicle_state(test_database_url
 
     assert point_count == 1
     assert fetch_count == 2
-    assert migration_count == 1
-    assert migration_row == ("0001", "0001_initial.sql")
+    assert fetch_attempt_log_count == 1
+    assert migration_count == 2
+    assert migration_rows == [
+        ("0001", "0001_initial.sql"),
+        ("0002", "0002_fetch_attempt_log.sql"),
+    ]
     assert latest_row is not None
     assert float(latest_row[0]) == pytest.approx(118.7162)
     assert float(latest_row[1]) == pytest.approx(32.2032)
@@ -231,6 +246,34 @@ def _build_point_fetch(
         error_message=None,
         raw_json={"status_code": 200},
         observations=observations,
+    )
+
+
+def _build_fetch_attempt_log(
+    *,
+    sweep_id: uuid.UUID,
+    point: CrawlPoint,
+    fetch_id: uuid.UUID,
+) -> FetchAttemptLogRecord:
+    return FetchAttemptLogRecord(
+        id=uuid.uuid4(),
+        fetch_id=fetch_id,
+        sweep_id=sweep_id,
+        point_id=point.id,
+        point_name=point.name,
+        source_namespace="test",
+        collector_id="collector-a",
+        attempt=1,
+        requested_at=datetime(2026, 3, 8, 9, 59, tzinfo=UTC),
+        finished_at=datetime(2026, 3, 8, 9, 59, 2, tzinfo=UTC),
+        request_latitude=point.latitude,
+        request_longitude=point.longitude,
+        http_status=200,
+        status_code=200,
+        trace_id="trace-audit",
+        error_type=None,
+        error_message=None,
+        response_body='{"status_code":200,"message":"ok"}',
     )
 
 

@@ -104,6 +104,7 @@ cp .env.example .env
 ```bash
 DATABASE_URL=postgresql://sevenma:sevenma@postgres:5432/sevenma
 COMPOSE_PROFILES=local-db
+SEVENMA_RAW_FETCH_LOG_DIR=/app/var/raw-fetch-logs
 ```
 
 填好高德 key 后，直接启动整套服务：
@@ -117,6 +118,10 @@ docker compose up -d --build
 - `bootstrap`: 一次性建表并导入 58 个点
 - `collector`: 常驻采集器
 - `dashboard`: 监控大屏
+
+原始抓取响应会额外写入：
+- PostgreSQL 的 `fetch_attempt_log`
+- 本地 JSONL 文件目录 `SEVENMA_RAW_FETCH_LOG_DIR`（compose 默认挂到持久卷）
 
 大屏地址：
 
@@ -150,5 +155,6 @@ COMPOSE_PROFILES=
 - `crawl_point`: 固定采集点配置
 - `crawl_sweep`: 某个采集器的一次完整扫描
 - `point_fetch`: 某次扫描里某个点的一次实际请求
+- `fetch_attempt_log`: 每次尝试的原始响应日志，保留 `response_body`
 - `raw_observation`: 某次请求扫到的一辆车
 - `vehicle_latest`: 从历史记录自动推导的最新状态 view

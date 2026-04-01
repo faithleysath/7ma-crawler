@@ -9,6 +9,7 @@ import psycopg
 from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
+from .fetch_audit import FetchAttemptLogRecord
 from .points import CrawlPoint
 from .records import PointFetchRecord, SweepRecord
 
@@ -128,6 +129,60 @@ class Database:
                         sweep.point_count,
                         sweep.success_count,
                         sweep.failure_count,
+                    ),
+                )
+
+    def insert_fetch_attempt_log(self, record: FetchAttemptLogRecord) -> None:
+        """Persist one raw per-attempt fetch journal row."""
+
+        with self._connection.transaction():
+            with self._connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into fetch_attempt_log (
+                        id,
+                        fetch_id,
+                        sweep_id,
+                        point_id,
+                        point_name,
+                        source_namespace,
+                        collector_id,
+                        attempt,
+                        requested_at,
+                        finished_at,
+                        request_latitude,
+                        request_longitude,
+                        http_status,
+                        status_code,
+                        trace_id,
+                        error_type,
+                        error_message,
+                        response_body
+                    )
+                    values (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        record.id,
+                        record.fetch_id,
+                        record.sweep_id,
+                        record.point_id,
+                        record.point_name,
+                        record.source_namespace,
+                        record.collector_id,
+                        record.attempt,
+                        record.requested_at,
+                        record.finished_at,
+                        record.request_latitude,
+                        record.request_longitude,
+                        record.http_status,
+                        record.status_code,
+                        record.trace_id,
+                        record.error_type,
+                        record.error_message,
+                        record.response_body,
                     ),
                 )
 

@@ -4,6 +4,7 @@ x-app-env: &app-env
   AMAP_SECURITY_JS_CODE: ${AMAP_SECURITY_JS_CODE:-}
   SEVENMA_SOURCE_NAMESPACE: ${SEVENMA_SOURCE_NAMESPACE:-prod}
   SEVENMA_COLLECTOR_ID: ${SEVENMA_COLLECTOR_ID:-collector-compose}
+  SEVENMA_RAW_FETCH_LOG_DIR: ${SEVENMA_RAW_FETCH_LOG_DIR:-/app/var/raw-fetch-logs}
   SEVENMA_INTERVAL_SECONDS: ${SEVENMA_INTERVAL_SECONDS:-60}
   SEVENMA_CONCURRENCY: ${SEVENMA_CONCURRENCY:-8}
   SEVENMA_TIMEOUT_SECONDS: ${SEVENMA_TIMEOUT_SECONDS:-10}
@@ -22,6 +23,8 @@ x-app-common: &app-common
   environment:
     <<: *app-env
   restart: unless-stopped
+  volumes:
+    - sevenma_raw_fetch_logs:/app/var/raw-fetch-logs
 
 services:
   postgres:
@@ -68,3 +71,4 @@ services:
 
 volumes:
   sevenma_postgres_data:
+  sevenma_raw_fetch_logs:
